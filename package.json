@@ -1,0 +1,18 @@
+{
+  "name": "commute-capture",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Commute audio capture API",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "migrate": "node scripts/migrate.mjs",
+    "seed": "node scripts/seed-prompts.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.600.0",
+    "@aws-sdk/s3-request-presigner": "^3.600.0",
+    "express": "^4.21.0",
+    "pg": "^8.13.0"
+  }
+}
