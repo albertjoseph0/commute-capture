@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0a0e17">
+  <meta name="description" content="CommuteCapture — Hands-free in-car speech data collection for AI/ML training datasets">
+
+  <title>CommuteCapture</title>
+
+  <link rel="apple-touch-icon" href="/icons/icon-180.png">
+  <link rel="manifest" href="/manifest.json">
+
+  <!-- Stylesheets -->
+  <link rel="stylesheet" href="/css/design-system.css">
+  <link rel="stylesheet" href="/css/capture.css">
+  <link rel="stylesheet" href="/css/review.css">
+  <link rel="stylesheet" href="/css/coverage.css">
+</head>
+<body>
+  <div class="app-shell">
+    <!-- ═══════ Navigation ═══════ -->
+    <nav class="nav-bar" id="nav-bar">
+      <div class="nav-bar__brand">
+        <div class="nav-bar__brand-icon">🎙️</div>
+        <span>CommuteCapture</span>
+      </div>
+      <div class="nav-bar__links">
+        <a href="#capture" class="nav-link active" data-page="capture" id="nav-capture">
+          <span class="nav-link__icon">⊙</span>
+          <span>Capture</span>
+        </a>
+        <a href="#review" class="nav-link" data-page="review" id="nav-review">
+          <span class="nav-link__icon">☰</span>
+          <span>Review</span>
+        </a>
+        <a href="#coverage" class="nav-link" data-page="coverage" id="nav-coverage">
+          <span class="nav-link__icon">◔</span>
+          <span>Coverage</span>
+        </a>
+      </div>
+    </nav>
+
+    <!-- ═══════ Toast Container ═══════ -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- ═══════════════════════════════════════════════
+         PAGE: Capture
+         ═══════════════════════════════════════════════ -->
+    <main class="main-content page-view active" id="page-capture">
+
+      <!-- Pre-session Start Screen -->
+      <div class="capture-start" id="capture-start-screen">
+        <!-- The BIG button — the only thing that matters when you open the app -->
+        <button class="start-hero-btn" id="btn-start-session">
+          <span class="start-hero-btn__icon">▶</span>
+          <span class="start-hero-btn__text">Start Commute</span>
+        </button>
+
+        <p class="capture-start__hint">
+          Hands-free · Auto-records · 10s per prompt
+        </p>
+
+        <div class="permissions-pills" id="permissions-list">
+          <span class="perm-pill" id="perm-mic">🎤 Mic</span>
+          <span class="perm-pill" id="perm-gps">📍 GPS</span>
+          <span class="perm-pill" id="perm-motion">📱 Motion</span>
+        </div>
+      </div>
+
+      <!-- Active Session Screen -->
+      <div class="capture-page" id="capture-active-screen" style="display:none;">
+        <!-- Status Bar -->
+        <div class="capture-status-bar" id="capture-status-bar">
+          <div class="capture-status-bar__item" id="status-gps">
+            <span class="capture-status-bar__dot" id="dot-gps"></span>
+            <span>GPS</span>
+          </div>
+          <div class="capture-status-bar__item" id="status-mic">
+            <span class="capture-status-bar__dot" id="dot-mic"></span>
+            <span>Mic</span>
+          </div>
+          <div class="capture-status-bar__item" id="status-motion">
+            <span class="capture-status-bar__dot" id="dot-motion"></span>
+            <span>Motion</span>
+          </div>
+        </div>
+
+        <!-- Prompt -->
+        <div class="prompt-container">
+          <div class="prompt-card" id="prompt-card">
+            <div class="prompt-card__meta">
+              <span class="badge badge--blue" id="prompt-category">—</span>
+              <span class="prompt-card__number" id="prompt-number">—</span>
+            </div>
+            <div class="prompt-card__text" id="prompt-text">
+              Preparing first prompt…
+            </div>
+          </div>
+        </div>
+
+        <!-- Recording Ring -->
+        <div class="recording-ring" id="recording-ring">
+          <svg class="recording-ring__svg" viewBox="0 0 220 220">
+            <defs>
+              <linearGradient id="ring-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="var(--cc-accent)" />
+                <stop offset="100%" stop-color="var(--cc-violet)" />
+              </linearGradient>
+            </defs>
+            <circle class="recording-ring__track" cx="110" cy="110" r="100" />
+            <circle class="recording-ring__progress" id="ring-progress" cx="110" cy="110" r="100" />
+          </svg>
+          <div class="recording-ring__center">
+            <span class="recording-ring__timer" id="ring-timer">10.0</span>
+            <span class="recording-ring__label" id="ring-label">READY</span>
+          </div>
+        </div>
+
+        <!-- Waveform Visualizer -->
+        <div class="waveform" id="waveform"></div>
+
+        <!-- Controls -->
+        <div class="capture-controls">
+          <button class="btn btn--ghost btn--icon" id="btn-skip-prompt" title="Re-read prompt">⏭</button>
+          <button class="btn-record" id="btn-record" title="Pause / Resume auto-recording"></button>
+          <button class="btn btn--danger btn--icon" id="btn-end-session" title="End session">⏹</button>
+        </div>
+
+        <!-- Session Info -->
+        <div class="session-info">
+          <div class="session-info__item">
+            <div class="session-info__label">Recorded</div>
+            <div class="session-info__value" id="info-recorded">0</div>
+          </div>
+          <div class="session-info__item">
+            <div class="session-info__label">Remaining</div>
+            <div class="session-info__value" id="info-remaining">—</div>
+          </div>
+          <div class="session-info__item">
+            <div class="session-info__label">Duration</div>
+            <div class="session-info__value" id="info-duration">0:00</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Session Complete Screen -->
+      <div class="session-summary" id="capture-done-screen" style="display:none;">
+        <div class="session-summary__check">✓</div>
+        <h2 class="session-summary__title">Commute Complete</h2>
+        <p class="dim">Great session! Your recordings have been uploaded.</p>
+        <div class="session-summary__stats">
+          <div class="session-info__item">
+            <div class="session-info__label">Clips</div>
+            <div class="session-info__value" id="summary-clips">0</div>
+          </div>
+          <div class="session-info__item">
+            <div class="session-info__label">Duration</div>
+            <div class="session-info__value" id="summary-duration">0:00</div>
+          </div>
+          <div class="session-info__item">
+            <div class="session-info__label">Uploaded</div>
+            <div class="session-info__value" id="summary-uploaded">0 MB</div>
+          </div>
+        </div>
+        <button class="btn btn--primary btn--lg" id="btn-new-session">
+          Start New Session
+        </button>
+      </div>
+    </main>
+
+    <!-- ═══════════════════════════════════════════════
+         PAGE: Review
+         ═══════════════════════════════════════════════ -->
+    <main class="main-content page-view" id="page-review">
+      <div class="review-page">
+        <div class="page-header">
+          <div>
+            <h1 class="page-header__title">Recordings</h1>
+            <p class="page-header__count" id="review-total-count">Loading…</p>
+          </div>
+          <div class="filter-bar" id="filter-bar">
+            <select class="filter-select" id="filter-category">
+              <option value="">All Categories</option>
+              <option value="free_form">Free Form</option>
+              <option value="task_oriented">Task Oriented</option>
+              <option value="short_command">Short Command</option>
+              <option value="hard_transcription">Hard Transcription</option>
+              <option value="read_speech">Read Speech</option>
+              <option value="turn_taking">Turn Taking</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="recording-list" id="recording-list">
+          <!-- Populated by JS -->
+        </div>
+
+        <div class="pagination" id="pagination">
+          <button class="btn btn--ghost" id="btn-prev-page" disabled>← Prev</button>
+          <span class="pagination__info" id="pagination-info">—</span>
+          <button class="btn btn--ghost" id="btn-next-page" disabled>Next →</button>
+        </div>
+      </div>
+
+      <!-- Detail Modal -->
+      <div class="detail-modal" id="detail-modal">
+        <div class="detail-modal__backdrop" id="detail-modal-backdrop"></div>
+        <div class="detail-modal__sheet">
+          <div class="detail-modal__handle"></div>
+          <div class="detail-modal__header">
+            <span class="detail-modal__title">Recording Detail</span>
+            <button class="detail-modal__close" id="detail-modal-close">✕</button>
+          </div>
+          <div class="detail-modal__body" id="detail-modal-body">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ═══════════════════════════════════════════════
+         PAGE: Coverage
+         ═══════════════════════════════════════════════ -->
+    <main class="main-content page-view" id="page-coverage">
+      <div class="coverage-page">
+        <div class="page-header">
+          <div>
+            <h1 class="page-header__title">Dataset Coverage</h1>
+            <p class="page-header__count" id="coverage-subtitle">Prompt recording distribution & gaps</p>
+          </div>
+          <button class="btn btn--ghost" id="btn-refresh-coverage">↻ Refresh</button>
+        </div>
+
+        <!-- Aggregate Stats -->
+        <div class="stat-grid" id="coverage-stats">
+          <div class="stat-card">
+            <span class="stat-card__label">Total Recordings</span>
+            <span class="stat-card__value stat-card__value--accent" id="cov-total-recordings">—</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-card__label">Active Prompts</span>
+            <span class="stat-card__value stat-card__value--green" id="cov-active-prompts">—</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-card__label">Avg / Prompt</span>
+            <span class="stat-card__value stat-card__value--amber" id="cov-avg-per-prompt">—</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-card__label">Underrepresented</span>
+            <span class="stat-card__value stat-card__value--violet" id="cov-underrep-count">—</span>
+          </div>
+        </div>
+
+        <!-- Donut Chart + Legend -->
+        <div class="card">
+          <div class="card__header">
+            <span class="card__title">📊 Category Distribution</span>
+          </div>
+          <div class="card__body">
+            <div class="donut-container" id="donut-container">
+              <div class="donut-chart" id="donut-chart">
+                <svg class="donut-chart__svg" viewBox="0 0 200 200" id="donut-svg"></svg>
+                <div class="donut-chart__center">
+                  <span class="donut-chart__total" id="donut-total">0</span>
+                  <span class="donut-chart__label">recordings</span>
+                </div>
+              </div>
+              <div class="legend" id="donut-legend"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Category Cards -->
+        <div class="category-grid" id="category-grid">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- Underrepresented Prompts -->
+        <div class="card">
+          <div class="card__header">
+            <span class="card__title">⚠️ Underrepresented Prompts</span>
+            <span class="badge badge--amber" id="underrep-badge">0</span>
+          </div>
+          <div class="card__body">
+            <div class="underrep-list" id="underrep-list">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- JavaScript Modules -->
+  <script src="/js/api.js"></script>
+  <script src="/js/toast.js"></script>
+  <script src="/js/router.js"></script>
+  <script src="/js/capture.js"></script>
+  <script src="/js/review.js"></script>
+  <script src="/js/coverage.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

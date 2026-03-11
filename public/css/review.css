@@ -1,0 +1,286 @@
+/* ═══════════════════════════════════════════════════════
+   Review Page — Browse & Inspect Recordings
+   ═══════════════════════════════════════════════════════ */
+
+.review-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cc-space-xl);
+}
+
+/* ── Page Header ──────────────────────────────────── */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--cc-space-md);
+}
+
+.page-header__title {
+  font-size: var(--cc-text-2xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.page-header__count {
+  font-size: var(--cc-text-sm);
+  color: var(--cc-text-muted);
+}
+
+/* ── Filter Bar ───────────────────────────────────── */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--cc-space-sm);
+  flex-wrap: wrap;
+}
+
+.filter-select {
+  appearance: none;
+  padding: 8px 32px 8px 14px;
+  background: var(--cc-bg-surface);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-md);
+  color: var(--cc-text-secondary);
+  font-family: var(--cc-font-sans);
+  font-size: var(--cc-text-sm);
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' stroke='%2394a3b8' fill='none' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  transition: border-color var(--cc-duration-fast);
+}
+
+.filter-select:hover {
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+.filter-select:focus {
+  outline: none;
+  border-color: var(--cc-accent);
+  box-shadow: 0 0 0 3px var(--cc-accent-subtle);
+}
+
+/* ── Recording List ───────────────────────────────── */
+.recording-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cc-space-sm);
+}
+
+.recording-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: var(--cc-space-md);
+  padding: var(--cc-space-md) var(--cc-space-lg);
+  background: var(--cc-bg-surface);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-md);
+  cursor: pointer;
+  transition: all var(--cc-duration-fast) var(--cc-ease-out);
+}
+
+.recording-item:hover {
+  border-color: rgba(148, 163, 184, 0.25);
+  background: var(--cc-bg-elevated);
+  transform: translateX(4px);
+}
+
+.recording-item__play {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: var(--cc-accent-subtle);
+  color: var(--cc-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all var(--cc-duration-fast);
+}
+
+.recording-item__play:hover {
+  background: var(--cc-accent);
+  color: white;
+  box-shadow: 0 0 12px var(--cc-accent-glow);
+}
+
+.recording-item__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.recording-item__prompt {
+  font-size: var(--cc-text-sm);
+  font-weight: 500;
+  color: var(--cc-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recording-item__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--cc-space-sm);
+  font-size: var(--cc-text-xs);
+  color: var(--cc-text-muted);
+}
+
+.recording-item__meta-separator {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--cc-text-dim);
+}
+
+.recording-item__tags {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.recording-item__duration {
+  font-family: var(--cc-font-mono);
+  font-size: var(--cc-text-xs);
+  color: var(--cc-text-muted);
+  flex-shrink: 0;
+}
+
+/* ── Recording Detail Modal ───────────────────────── */
+.detail-modal {
+  position: fixed;
+  inset: 0;
+  z-index: var(--cc-z-modal);
+  display: none;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.detail-modal.visible {
+  display: flex;
+  animation: modal-bg-in var(--cc-duration-normal) var(--cc-ease-out);
+}
+
+.detail-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+.detail-modal__sheet {
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+  max-height: 85vh;
+  background: var(--cc-bg-surface);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-xl) var(--cc-radius-xl) 0 0;
+  overflow-y: auto;
+  animation: sheet-slide-up var(--cc-duration-normal) var(--cc-ease-snap);
+}
+
+@keyframes modal-bg-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes sheet-slide-up {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+.detail-modal__handle {
+  width: 36px;
+  height: 4px;
+  border-radius: var(--cc-radius-full);
+  background: var(--cc-text-dim);
+  margin: 12px auto;
+}
+
+.detail-modal__header {
+  padding: var(--cc-space-md) var(--cc-space-lg);
+  border-bottom: 1px solid var(--cc-border-light);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.detail-modal__title {
+  font-size: var(--cc-text-base);
+  font-weight: 600;
+}
+
+.detail-modal__close {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--cc-radius-sm);
+  border: none;
+  background: var(--cc-bg-hover);
+  color: var(--cc-text-secondary);
+  cursor: pointer;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.detail-modal__body {
+  padding: var(--cc-space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--cc-space-lg);
+}
+
+.detail-section__title {
+  font-size: var(--cc-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--cc-text-muted);
+  margin-bottom: var(--cc-space-sm);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--cc-space-sm);
+}
+
+.detail-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.detail-field__label {
+  font-size: var(--cc-text-xs);
+  color: var(--cc-text-muted);
+}
+
+.detail-field__value {
+  font-size: var(--cc-text-sm);
+  color: var(--cc-text-primary);
+  font-family: var(--cc-font-mono);
+}
+
+/* ── Pagination ───────────────────────────────────── */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--cc-space-sm);
+}
+
+.pagination__info {
+  font-size: var(--cc-text-sm);
+  color: var(--cc-text-muted);
+  padding: 0 var(--cc-space-md);
+}
