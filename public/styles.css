@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom pulse animation for active recording */
+@keyframes recordingPulse {
+  0% { transform: scale(1); opacity: 0.8; }
+  50% { transform: scale(1.1); opacity: 1; }
+  100% { transform: scale(1); opacity: 0.8; }
+}
+
+.animate-recording {
+  animation: recordingPulse 2s infinite ease-in-out;
+}
+
+/* Ensure no bounce on iOS Safari */
+html, body {
+  overscroll-behavior: none;
+}
+
+/* Smooth view transitions if supported */
+.view-enter {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.view-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 300ms, transform 300ms ease-out;
+}

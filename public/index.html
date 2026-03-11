@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>CommuteCapture</title>
+
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- PWA meta tags (future-proofing based on design doc) -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+  <!-- Custom styles -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-gray-900 text-white font-sans antialiased h-screen overflow-hidden flex flex-col items-center justify-center p-4">
+
+  <div id="app" class="w-full max-w-md h-full max-h-[800px] flex flex-col relative rounded-xl overflow-hidden bg-gray-800 shadow-2xl border border-gray-700">
+    <!-- Header -->
+    <header class="p-4 border-b border-gray-700 flex justify-between items-center bg-gray-800 z-10">
+      <h1 class="text-xl font-bold tracking-tight">CommuteCapture</h1>
+      <div id="status-indicator" class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-gray-500" id="status-dot"></span>
+        <span class="text-xs text-gray-400 font-medium" id="status-text">Ready</span>
+      </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main id="main-content" class="flex-1 flex flex-col overflow-hidden relative p-6">
+
+      <!-- Landing View -->
+      <div id="view-landing" class="flex flex-col h-full items-center justify-center space-y-8 transition-all duration-300">
+        <div class="text-center space-y-4">
+          <div class="inline-flex items-center justify-center w-20 h-20 rounded-full bg-blue-600/20 text-blue-500 mb-2">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+            </svg>
+          </div>
+          <h2 class="text-2xl font-semibold">Ready to Drive</h2>
+          <p class="text-gray-400 max-w-[250px] mx-auto text-sm leading-relaxed">
+            Contribute to AI voice models by speaking naturally during your commute.
+          </p>
+        </div>
+
+        <button id="btn-start" class="w-full py-4 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold rounded-2xl shadow-lg shadow-blue-900/50 transition-all transform active:scale-95 text-lg tracking-wide">
+          Start Commute
+        </button>
+      </div>
+
+      <!-- Capture View (Hidden initially) -->
+      <div id="view-capture" class="flex flex-col h-full hidden opacity-0 transition-all duration-300">
+
+        <!-- Prompt Display -->
+        <div class="flex-1 flex flex-col items-center justify-center text-center space-y-6">
+          <div class="text-sm font-medium text-gray-400 tracking-wider uppercase" id="prompt-category">
+            Loading...
+          </div>
+
+          <div class="text-3xl font-bold leading-tight px-4 text-blue-50" id="prompt-text">
+            Connecting to server...
+          </div>
+        </div>
+
+        <!-- Recording Indicator & Controls -->
+        <div class="flex flex-col items-center space-y-6 pb-6">
+          <!-- Circular Progress / Status UI -->
+          <div class="relative flex items-center justify-center w-32 h-32">
+            <svg class="absolute inset-0 w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+              <circle cx="50" cy="50" r="45" fill="none" stroke="#374151" stroke-width="4"></circle>
+              <circle id="progress-ring" cx="50" cy="50" r="45" fill="none" stroke="#3b82f6" stroke-width="4" stroke-dasharray="283" stroke-dashoffset="283" class="transition-all duration-100 linear"></circle>
+            </svg>
+
+            <div id="mic-icon" class="w-16 h-16 rounded-full bg-gray-700 flex items-center justify-center transition-colors duration-300 shadow-inner">
+               <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 text-gray-400" id="mic-svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+              </svg>
+            </div>
+          </div>
+
+          <div class="text-lg font-medium tracking-wide text-gray-300" id="action-text">
+            Preparing...
+          </div>
+
+          <button id="btn-end" class="mt-4 px-6 py-3 bg-red-500/10 text-red-400 hover:bg-red-500/20 active:bg-red-500/30 font-medium rounded-xl border border-red-500/20 transition-all text-sm">
+            End Commute
+          </button>
+        </div>
+
+      </div>
+
+    </main>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
