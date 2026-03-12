@@ -28,6 +28,9 @@ window.capturePage = (() => {
   let speechUnlocked = false;
   const speechVoicesReady = hasSpeech ? waitForSpeechVoices() : Promise.resolve();
 
+  // Wake Lock
+  let wakeLock = null;
+
   // Sensors
   let gpsWatchId = null;
   let lastGpsPosition = null;
@@ -108,11 +111,10 @@ window.capturePage = (() => {
 
      1. Show prompt on screen
      2. Speak prompt via TTS (wait for it to finish)
-     3. Brief countdown
-     4. Record for 10s
-     5. Upload + save metadata
-     6. Advance to next prompt
-     7. Repeat from step 1
+     3. Record for 10s
+     4. Upload + save metadata
+     5. Advance to next prompt
+     6. Repeat from step 1
      ═══════════════════════════════════════════════════ */
 
   async function runPromptLoop() {
@@ -132,13 +134,7 @@ window.capturePage = (() => {
         await speakPromptAsync(currentPrompt.text);
         if (!sessionActive || isPaused) continue;
 
-        // ③ Brief countdown before recording (1.5s)
-        setRingState('countdown');
-        els.ringTimer.textContent = '…';
-        await delay(1500);
-        if (!sessionActive || isPaused) continue;
-
-        // ④ Get presigned upload URL
+        // ③ Get presigned upload URL
         setRingState('preparing');
         const uploadInfo = await api.getUploadUrl({
           commute_id: commuteId,
@@ -147,11 +143,11 @@ window.capturePage = (() => {
         });
         if (!sessionActive || isPaused) continue;
 
-        // ⑤ Record for 10 seconds
+        // ④ Record for 10 seconds
         const recordResult = await recordAudio();
         if (!sessionActive || !recordResult) continue;
 
-        // ⑥ Upload to MinIO
+        // ⑤ Upload to MinIO
         setRingState('uploading');
         const uploadResp = await fetch(uploadInfo.upload_url, {
           method: 'PUT',
@@ -163,7 +159,7 @@ window.capturePage = (() => {
         }
         if (!sessionActive) break;
 
-        // ⑦ Notify backend
+        // ⑥ Notify backend
         const captureStartedAt = new Date(Date.now() - recordResult.durationMs).toISOString();
         const captureEndedAt = new Date().toISOString();
         const sensorData = gatherRecordingMetadata();
@@ -182,7 +178,7 @@ window.capturePage = (() => {
           ...sensorData,
         });
 
-        // ⑧ Advance to next prompt
+        // ⑦ Advance to next prompt
         recordedCount++;
         currentPrompt = result.next_prompt;
         remainingCount = result.remaining_count;
@@ -269,6 +265,9 @@ window.capturePage = (() => {
       sessionActive = true;
       isPaused = false;
 
+      // Keep screen on
+      await requestWakeLock();
+
       // Start GPS watch
       startGpsWatch();
 
@@ -317,6 +316,7 @@ window.capturePage = (() => {
       await api.endCommute(commuteId);
 
       // Cleanup
+      releaseWakeLock();
       stopGpsWatch();
       stopMotionListeners();
       clearInterval(sessionDurationInterval);
@@ -836,6 +836,36 @@ window.capturePage = (() => {
           setTimeout(resolve, 15000);
         }),
     );
+  }
+
+  // ── Wake Lock ──────────────────────────────────────
+  async function requestWakeLock() {
+    if ('wakeLock' in navigator) {
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+        document.addEventListener('visibilitychange', reacquireWakeLock);
+      } catch (err) {
+        console.warn('Wake lock request failed:', err);
+      }
+    }
+  }
+
+  async function reacquireWakeLock() {
+    if (document.visibilityState === 'visible' && sessionActive && !wakeLock) {
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      } catch {}
+    }
+  }
+
+  function releaseWakeLock() {
+    document.removeEventListener('visibilitychange', reacquireWakeLock);
+    if (wakeLock) {
+      wakeLock.release();
+      wakeLock = null;
+    }
   }
 
   // ── Helpers ────────────────────────────────────────
