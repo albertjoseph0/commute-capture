@@ -19,15 +19,14 @@ window.capturePage = (() => {
   let isRecording = false;
   let isPaused = false;       // user can pause the auto-loop
   let mediaStream = null;
-  let mediaRecorder = null;
-  let audioChunks = [];
-  let recordingStartTime = null;
   let recordingTimerInterval = null;
   let recordingDurationMs = 10000; // 10 seconds
-  let autoStopTimeout = null;
+  let cancelCurrentRecording = null; // function to cancel active recording
 
-  // Upload info for current recording (fetched before recording starts)
-  let pendingUploadInfo = null;
+  // TTS
+  const hasSpeech = 'speechSynthesis' in window && typeof window.SpeechSynthesisUtterance === 'function';
+  let speechUnlocked = false;
+  const speechVoicesReady = hasSpeech ? waitForSpeechVoices() : Promise.resolve();
 
   // Sensors
   let gpsWatchId = null;
@@ -105,76 +104,111 @@ window.capturePage = (() => {
   }
 
   /* ═══════════════════════════════════════════════════
-     THE AUTO-LOOP — Core hands-free cycle
-     ═══════════════════════════════════════════════════
-     
-     runPromptCycle():
-       1. Show prompt on screen
-       2. Speak prompt via TTS (wait for it to finish)
-       3. Brief "get ready" beep / countdown
-       4. Automatically start recording for 10s
-       5. Auto-stop, upload, save metadata
-       6. Advance to next prompt
-       7. Repeat from step 1
+     THE AUTO-LOOP — Core hands-free cycle (linear while-loop)
+
+     1. Show prompt on screen
+     2. Speak prompt via TTS (wait for it to finish)
+     3. Brief countdown
+     4. Record for 10s
+     5. Upload + save metadata
+     6. Advance to next prompt
+     7. Repeat from step 1
      ═══════════════════════════════════════════════════ */
 
-  async function runPromptCycle() {
-    // Safety checks — bail if session ended, paused, or no prompt
-    if (!sessionActive || !currentPrompt || !commuteId) return;
+  async function runPromptLoop() {
+    while (sessionActive && currentPrompt && commuteId) {
+      // Wait while paused
+      while (isPaused && sessionActive) {
+        await delay(200);
+      }
+      if (!sessionActive || !currentPrompt) break;
 
-    // If paused, wait — the resume handler will re-call runPromptCycle
-    if (isPaused) return;
+      try {
+        // ① Show prompt
+        updatePromptDisplay();
+        setRingState('speaking');
 
-    try {
-      // ① Show prompt
-      updatePromptDisplay();
-      setRingState('speaking');
+        // ② Speak prompt and wait for TTS to finish
+        await speakPromptAsync(currentPrompt.text);
+        if (!sessionActive || isPaused) continue;
 
-      // ② Speak prompt and wait for TTS to finish
-      await speakPromptAsync(currentPrompt.text);
-      if (!sessionActive || isPaused) return;
-
-      // ③ Brief countdown before recording (1.5s)
-      setRingState('countdown');
-      els.ringTimer.textContent = '…';
-      await delay(1500);
-      if (!sessionActive || isPaused) return;
-
-      // ④ Get presigned upload URL
-      setRingState('preparing');
-      pendingUploadInfo = await api.getUploadUrl({
-        commute_id: commuteId,
-        prompt_id: currentPrompt.id,
-        content_type: 'audio/wav',
-      });
-      if (!sessionActive || isPaused) return;
-
-      // ⑤ Record for 10 seconds (auto)
-      await autoRecord();
-      if (!sessionActive) return;
-
-      // ⑥ Upload happened in autoRecord → handleRecordingComplete
-      //    That function updates currentPrompt & remainingCount
-      //    Small cooldown before next prompt
-      if (currentPrompt && sessionActive && !isPaused) {
-        setRingState('uploaded');
+        // ③ Brief countdown before recording (1.5s)
+        setRingState('countdown');
+        els.ringTimer.textContent = '…';
         await delay(1500);
-        // Loop to next
-        runPromptCycle();
-      } else if (!currentPrompt && sessionActive) {
-        // All prompts done
-        speak('All prompts have been recorded. Great session!');
-        toast.info('All prompts recorded! 🎉');
-        setRingState('done');
+        if (!sessionActive || isPaused) continue;
+
+        // ④ Get presigned upload URL
+        setRingState('preparing');
+        const uploadInfo = await api.getUploadUrl({
+          commute_id: commuteId,
+          prompt_id: currentPrompt.id,
+          content_type: wavRecorder.MIME_TYPE,
+        });
+        if (!sessionActive || isPaused) continue;
+
+        // ⑤ Record for 10 seconds
+        const recordResult = await recordAudio();
+        if (!sessionActive || !recordResult) continue;
+
+        // ⑥ Upload to MinIO
+        setRingState('uploading');
+        const uploadResp = await fetch(uploadInfo.upload_url, {
+          method: 'PUT',
+          headers: { 'Content-Type': wavRecorder.MIME_TYPE },
+          body: recordResult.blob,
+        });
+        if (!uploadResp.ok) {
+          throw new Error(`Upload failed: HTTP ${uploadResp.status}`);
+        }
+        if (!sessionActive) break;
+
+        // ⑦ Notify backend
+        const captureStartedAt = new Date(Date.now() - recordResult.durationMs).toISOString();
+        const captureEndedAt = new Date().toISOString();
+        const sensorData = gatherRecordingMetadata();
+
+        const result = await api.createRecording({
+          commute_id: commuteId,
+          prompt_id: currentPrompt.id,
+          object_url: uploadInfo.object_url,
+          object_key: uploadInfo.object_key,
+          duration_ms: recordResult.durationMs,
+          capture_started_at: captureStartedAt,
+          capture_ended_at: captureEndedAt,
+          upload_completed_at: new Date().toISOString(),
+          file_size_bytes: recordResult.blob.size,
+          content_type: wavRecorder.MIME_TYPE,
+          ...sensorData,
+        });
+
+        // ⑧ Advance to next prompt
+        recordedCount++;
+        currentPrompt = result.next_prompt;
+        remainingCount = result.remaining_count;
+        updatePromptDisplay();
+        updateSessionInfo();
+        toast.success(`Clip #${recordedCount} uploaded ✓`);
+
+        // Cooldown before next prompt
+        setRingState('uploaded');
+        await delay(2000);
+
+      } catch (err) {
+        console.error('Prompt cycle error:', err);
+        toast.error(`Error: ${err.message}`);
+        // Pause on error instead of silently retrying
+        isPaused = true;
+        updatePauseButton();
+        setRingState('paused');
+        toast.info('Paused due to error — tap play to retry');
       }
-    } catch (err) {
-      console.error('Prompt cycle error:', err);
-      toast.error(`Error: ${err.message}`);
-      // Wait and retry
-      if (sessionActive && !isPaused && currentPrompt) {
-        await delay(3000);
-        runPromptCycle();
-      }
+    }
+
+    if (!currentPrompt && sessionActive) {
+      speakPromptAsync('All prompts have been recorded. Great session!');
+      toast.info('All prompts recorded! 🎉');
+      setRingState('done');
     }
   }
 
@@ -186,6 +220,24 @@ window.capturePage = (() => {
       const iconEl = els.btnStart.querySelector('.start-hero-btn__icon');
       if (textEl) textEl.textContent = 'Starting…';
       if (iconEl) iconEl.textContent = '⏳';
+
+      // Unlock TTS on iOS Safari — must happen in direct user gesture handler
+      unlockSpeechSynthesis();
+
+      // Request motion permission immediately in user gesture (iOS requires this)
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        try {
+          const motionResult = await DeviceMotionEvent.requestPermission();
+          markPermission('perm-motion', motionResult === 'granted');
+        } catch {
+          markPermission('perm-motion', false);
+        }
+      } else {
+        markPermission('perm-motion', true);
+      }
+
+      // Wait for WAV encoder to be ready
+      await wavRecorder.ready();
 
       // Request permissions
       await requestPermissions();
@@ -232,7 +284,7 @@ window.capturePage = (() => {
       toast.success('Commute started — hands-free mode active');
 
       // ★ KICK OFF THE AUTO-LOOP ★
-      runPromptCycle();
+      runPromptLoop();
 
     } catch (err) {
       console.error('Start session error:', err);
@@ -253,12 +305,12 @@ window.capturePage = (() => {
       sessionActive = false;
 
       // Stop recording if active
-      if (isRecording) {
-        cancelRecording();
+      if (isRecording && cancelCurrentRecording) {
+        cancelCurrentRecording();
       }
 
       // Cancel any pending TTS
-      if ('speechSynthesis' in window) {
+      if (hasSpeech) {
         speechSynthesis.cancel();
       }
 
@@ -268,7 +320,6 @@ window.capturePage = (() => {
       stopGpsWatch();
       stopMotionListeners();
       clearInterval(sessionDurationInterval);
-      clearTimeout(autoStopTimeout);
 
       // Speak goodbye
       speak('Commute complete. Great job!');
@@ -311,19 +362,13 @@ window.capturePage = (() => {
     if (!sessionActive) return;
 
     if (isPaused) {
-      // Resume
+      // Resume — the while loop in runPromptLoop will pick up automatically
       isPaused = false;
       updatePauseButton();
       toast.info('Resumed — next prompt coming up');
 
-      if ('speechSynthesis' in window) {
+      if (hasSpeech) {
         speechSynthesis.cancel();
-      }
-
-      // If we were recording when paused, that recording was cancelled.
-      // Just restart the cycle from the current prompt.
-      if (!isRecording) {
-        runPromptCycle();
       }
     } else {
       // Pause
@@ -331,16 +376,15 @@ window.capturePage = (() => {
       updatePauseButton();
 
       // Stop any in-progress recording
-      if (isRecording) {
-        cancelRecording();
+      if (isRecording && cancelCurrentRecording) {
+        cancelCurrentRecording();
       }
 
       // Cancel TTS
-      if ('speechSynthesis' in window) {
+      if (hasSpeech) {
         speechSynthesis.cancel();
       }
 
-      clearTimeout(autoStopTimeout);
       setRingState('paused');
       toast.info('Paused — tap play to resume');
     }
@@ -362,180 +406,62 @@ window.capturePage = (() => {
     if (!sessionActive || !currentPrompt) return;
 
     // Cancel current recording if active
-    if (isRecording) {
-      cancelRecording();
+    if (isRecording && cancelCurrentRecording) {
+      cancelCurrentRecording();
     }
 
     // Cancel TTS
-    if ('speechSynthesis' in window) {
+    if (hasSpeech) {
       speechSynthesis.cancel();
     }
 
-    clearTimeout(autoStopTimeout);
-    toast.info('Skipped — moving to next prompt');
-
-    // Re-trigger the cycle with the same prompt (re-read it)
-    // In a real app you might want to actually skip to a different prompt
-    runPromptCycle();
+    toast.info('Skipped — re-reading prompt');
   }
 
-  // ── Auto-Record (returns Promise) ──────────────────
-  function autoRecord() {
-    return new Promise(async (resolve, reject) => {
-      if (!currentPrompt || !commuteId || !pendingUploadInfo) {
-        return reject(new Error('No prompt or upload info'));
-      }
-
-      try {
-        isRecording = true;
-        audioChunks = [];
-        recordingStartTime = Date.now();
-
-        // Ensure we have a media stream
-        if (!mediaStream) {
-          mediaStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              echoCancellation: false,
-              noiseSuppression: false,
-              autoGainControl: false,
-            },
-          });
-          setupAudioAnalysis(mediaStream);
-        }
-
-        mediaRecorder = new MediaRecorder(mediaStream, {
-          mimeType: getSupportedMimeType(),
-        });
-
-        mediaRecorder.ondataavailable = (e) => {
-          if (e.data.size > 0) audioChunks.push(e.data);
-        };
-
-        mediaRecorder.onstop = async () => {
-          if (!isRecording && audioChunks.length === 0) {
-            // Cancelled — don't upload
-            resolve();
-            return;
-          }
-          isRecording = false;
-
-          try {
-            await handleRecordingComplete(pendingUploadInfo);
-            resolve();
-          } catch (err) {
-            reject(err);
-          }
-        };
-
-        mediaRecorder.start(100);
-
-        // Update UI for recording state
-        setRingState('recording');
-        els.dotMic.className = 'capture-status-bar__dot capture-status-bar__dot--mic';
-
-        // Start countdown timer
-        startRecordingTimer();
-
-        // Auto-stop after duration
-        autoStopTimeout = setTimeout(() => {
-          if (isRecording && mediaRecorder && mediaRecorder.state !== 'inactive') {
-            isRecording = false; // mark before stop so onstop knows it was normal
-            isRecording = true;  // actually keep it true so onstop processes it
-            mediaRecorder.stop();
-          }
-        }, recordingDurationMs);
-
-      } catch (err) {
-        isRecording = false;
-        reject(err);
-      }
-    });
-  }
-
-  function cancelRecording() {
-    isRecording = false;
-    clearInterval(recordingTimerInterval);
-    clearTimeout(autoStopTimeout);
-
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-      mediaRecorder.ondataavailable = null;
-      mediaRecorder.onstop = null;
-      try { mediaRecorder.stop(); } catch {}
+  // ── Record Audio (returns Promise<{ blob, durationMs } | null>) ──
+  async function recordAudio() {
+    if (!currentPrompt || !commuteId) {
+      throw new Error('No prompt or commute');
     }
 
-    audioChunks = [];
-    setRingState('ready');
-    resetWaveform();
-  }
+    isRecording = true;
+    setRingState('recording');
+    els.dotMic.className = 'capture-status-bar__dot capture-status-bar__dot--mic';
 
-  async function handleRecordingComplete(uploadInfo) {
-    const captureEndedAt = new Date().toISOString();
-    const captureStartedAt = new Date(recordingStartTime).toISOString();
-    const blob = new Blob(audioChunks, { type: getSupportedMimeType() });
-    const durationMs = Date.now() - recordingStartTime;
+    // Start countdown timer UI
+    startRecordingTimer();
 
-    // Reset recording UI
+    const result = await wavRecorder.record(mediaStream, recordingDurationMs, {
+      onTick: (elapsed) => {
+        const remaining = Math.max(0, recordingDurationMs - elapsed);
+        els.ringTimer.textContent = (remaining / 1000).toFixed(1);
+        updateRingProgress(elapsed / recordingDurationMs);
+        if (analyserNode && isRecording) updateWaveform();
+      },
+      onCancel: (cancelFn) => {
+        cancelCurrentRecording = () => {
+          cancelFn();
+          isRecording = false;
+          clearInterval(recordingTimerInterval);
+          cancelCurrentRecording = null;
+          setRingState('ready');
+          resetWaveform();
+        };
+      },
+    });
+
+    isRecording = false;
     clearInterval(recordingTimerInterval);
-    setRingState('uploading');
+    cancelCurrentRecording = null;
     resetWaveform();
 
-    // Upload to MinIO via presigned URL
-    await fetch(uploadInfo.upload_url, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'audio/wav' },
-      body: blob,
-    });
-
-    const uploadCompletedAt = new Date().toISOString();
-
-    // Gather current sensor data
-    const sensorData = gatherRecordingMetadata();
-
-    // Notify backend
-    const result = await api.createRecording({
-      commute_id: commuteId,
-      prompt_id: currentPrompt.id,
-      object_url: uploadInfo.object_url,
-      object_key: uploadInfo.object_key,
-      duration_ms: durationMs,
-      capture_started_at: captureStartedAt,
-      capture_ended_at: captureEndedAt,
-      upload_completed_at: uploadCompletedAt,
-      file_size_bytes: blob.size,
-      content_type: blob.type || 'audio/wav',
-      ...sensorData,
-    });
-
-    recordedCount++;
-    currentPrompt = result.next_prompt;
-    remainingCount = result.remaining_count;
-
-    updatePromptDisplay();
-    updateSessionInfo();
-    toast.success(`Clip #${recordedCount} uploaded ✓`);
+    return result; // null if cancelled
   }
 
-  // ── Recording Timer ────────────────────────────────
+  // ── Recording Timer (kept for waveform updates if onTick not used) ──
   function startRecordingTimer() {
-    const start = Date.now();
-    const total = recordingDurationMs;
-
-    recordingTimerInterval = setInterval(() => {
-      const elapsed = Date.now() - start;
-      const remaining = Math.max(0, total - elapsed);
-      const seconds = (remaining / 1000).toFixed(1);
-      els.ringTimer.textContent = seconds;
-      updateRingProgress(elapsed / total);
-
-      // Update waveform
-      if (analyserNode && isRecording) {
-        updateWaveform();
-      }
-
-      if (remaining <= 0) {
-        clearInterval(recordingTimerInterval);
-      }
-    }, 50);
+    // Timer UI is now handled by wavRecorder.onTick callback
+    // This is a placeholder in case other code references it
   }
 
   function updateRingProgress(pct) {
@@ -702,17 +628,6 @@ window.capturePage = (() => {
       throw new Error('Microphone permission required');
     }
 
-    // Motion (iOS 13+ needs explicit request)
-    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-      try {
-        const result = await DeviceMotionEvent.requestPermission();
-        markPermission('perm-motion', result === 'granted');
-      } catch {
-        markPermission('perm-motion', false);
-      }
-    } else {
-      markPermission('perm-motion', true);
-    }
   }
 
   function markPermission(id, granted) {
@@ -864,9 +779,37 @@ window.capturePage = (() => {
     return meta;
   }
 
-  // ── TTS (Promise-based) ────────────────────────────
+  // ── TTS ─────────────────────────────────────────────
+  function unlockSpeechSynthesis() {
+    if (speechUnlocked || !hasSpeech) return;
+    const utterance = new SpeechSynthesisUtterance('');
+    utterance.volume = 0;
+    speechSynthesis.speak(utterance);
+    speechUnlocked = true;
+  }
+
+  function waitForSpeechVoices(timeoutMs = 1500) {
+    if (!hasSpeech) return Promise.resolve();
+    if (speechSynthesis.getVoices().length > 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      let settled = false;
+      let timerId = null;
+      const finalize = () => {
+        if (settled) return;
+        settled = true;
+        speechSynthesis.removeEventListener('voiceschanged', handleVoiceChange);
+        if (timerId) clearTimeout(timerId);
+        resolve();
+      };
+      function handleVoiceChange() { finalize(); }
+      timerId = setTimeout(finalize, timeoutMs);
+      speechSynthesis.addEventListener('voiceschanged', handleVoiceChange, { once: true });
+      speechSynthesis.getVoices();
+    });
+  }
+
   function speak(text) {
-    if (!('speechSynthesis' in window)) return;
+    if (!hasSpeech) return;
     const utter = new SpeechSynthesisUtterance(text);
     utter.rate = 0.9;
     utter.pitch = 1;
@@ -874,60 +817,30 @@ window.capturePage = (() => {
     speechSynthesis.speak(utter);
   }
 
-  /**
-   * Speak a prompt and return a Promise that resolves when TTS finishes.
-   * This is the key function that makes the auto-loop wait for speech to end
-   * before starting the recording.
-   */
   function speakPromptAsync(text) {
-    return new Promise((resolve) => {
-      if (!text || !('speechSynthesis' in window)) {
-        // No TTS available — just wait a moment
-        setTimeout(resolve, 1500);
-        return;
-      }
-
-      // Cancel any pending speech
-      speechSynthesis.cancel();
-
-      const utter = new SpeechSynthesisUtterance(text);
-      utter.rate = 0.9;
-      utter.pitch = 1;
-      utter.volume = 1;
-
-      utter.onend = () => resolve();
-      utter.onerror = () => resolve(); // resolve anyway to not block the loop
-
-      // Safety timeout in case onend never fires (can happen on some browsers)
-      const safetyTimeout = setTimeout(() => {
-        resolve();
-      }, 15000);
-
-      utter.onend = () => {
-        clearTimeout(safetyTimeout);
-        resolve();
-      };
-
-      speechSynthesis.speak(utter);
-    });
+    if (!text || !hasSpeech) {
+      return delay(1500);
+    }
+    return speechVoicesReady.then(
+      () =>
+        new Promise((resolve) => {
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.rate = 0.9;
+          utterance.pitch = 1;
+          utterance.volume = 1;
+          utterance.onend = () => resolve();
+          utterance.onerror = () => resolve();
+          speechSynthesis.cancel();
+          speechSynthesis.speak(utterance);
+          // Safety timeout
+          setTimeout(resolve, 15000);
+        }),
+    );
   }
 
   // ── Helpers ────────────────────────────────────────
   function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  function getSupportedMimeType() {
-    const types = [
-      'audio/webm;codecs=opus',
-      'audio/webm',
-      'audio/ogg;codecs=opus',
-      'audio/mp4',
-    ];
-    for (const t of types) {
-      if (MediaRecorder.isTypeSupported(t)) return t;
-    }
-    return '';
   }
 
   function formatDuration(ms) {

@@ -1,6 +1,6 @@
 # System Design: CommuteCapture — In-Car Speech Data Collection Platform
 
-> A single-user CLI-driven backend that captures high-value speech data during daily car commutes, uploading audio directly to MinIO and persisting rich metadata in Postgres for eventual licensing to AI/ML companies. A Safari PWA frontend will be added in a future phase.
+> A single-user platform that captures high-value speech data during daily car commutes. A Safari-based frontend provides a hands-free auto-loop experience (TTS prompt → WAV recording → upload), while the backend uploads audio directly to MinIO and persists rich metadata (GPS, device motion, orientation, compass, audio context) in Postgres for eventual licensing to AI/ML companies. Deployed via Docker Compose behind Caddy reverse proxy with Tailscale HTTPS for private access.
 
 ---
 
@@ -25,9 +25,9 @@
 
 - **Single-user system** — no authentication, authorization, or multi-tenant isolation
 - **Always-online** — assumes network connectivity during capture and upload
-- **CLI/API only** — no frontend UI in current scope (see §8 Future Development)
+- **Safari frontend** — vanilla JS single-page app with three pages (Capture, Review, Coverage); no framework
 - **Single-host deployment** — Docker Compose only; no Kubernetes, horizontal scaling, or HA failover
-- **Current scope excludes** transcript correction, dataset curation/export pipelines, buyer-facing packaging, and Safari PWA frontend (see §8 Future Development)
+- **Current scope excludes** transcript correction, dataset curation/export pipelines, and buyer-facing packaging (see §8 Future Development)
 
 ---
 
@@ -101,40 +101,60 @@ All endpoints under `/v1` prefix. REST with JSON request/response bodies.
 
 | Layer | Technology |
 |---|---|
+| **Frontend** | Vanilla JS SPA — `extendable-media-recorder` (true WAV), `speechSynthesis` (TTS), Geolocation/DeviceMotion/DeviceOrientation APIs |
 | **Server** | Express.js (Node.js) — JSON APIs + static files |
 | **Database** | `pg` (node-postgres) + raw SQL |
 | **Object Storage** | `@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner` for MinIO |
+| **Reverse Proxy** | Caddy — Tailscale HTTPS certs for `*.ts.net` domain, proxies app (port 3000) and MinIO (port 9000 via `/commute-audio/*` path) |
+| **Networking** | Tailscale — private WireGuard mesh; no port forwarding or public DNS required |
 | **Deployment** | Docker Compose: `app`, `db`, `minio`, `minio-setup` |
 
 ### Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│              Docker Compose Network                  │
-│                                                      │
-│  ┌───────────────────────┐                           │
-│  │   Express.js Server   │                           │
-│  │     (Node.js)         │                           │
-│  │                       │                           │
-│  │  JSON API routes:     │                           │
-│  │  /v1/commutes         │                           │
-│  │  /v1/uploads ─────────┼──── presigned PUT URL ────┤
-│  │  /v1/recordings       │                           │
-│  │  /v1/prompts          │                           │
-│  │  /v1/prompts/coverage │                           │
-│  └───────┬───────────────┘                           │
-│          │                                           │
-│          │ pg (node-postgres)        ┌──────────────┐│
-│          │                           │    MinIO     ││
-│          ▼                           │ (S3-compat)  ││
-│  ┌───────────────────┐               │              ││
-│  │   PostgreSQL 16   │               │ commute-     ││
-│  │                   │               │ audio/       ││
-│  │  commutes         │               │  commutes/   ││
-│  │  prompts          │               │   {id}/      ││
-│  │  recordings       │               │    {p}.wav   ││
-│  └───────────────────┘               └──────────────┘│
-└─────────────────────────────────────────────────────┘
+  Tailscale Network (private WireGuard mesh)
+  ┌──────────────────────────────────────────────────────────────┐
+  │  iPhone / MacBook                                            │
+  │  https://albert-server.tail2d72e9.ts.net                     │
+  └──────────────┬───────────────────────────────────────────────┘
+                 │ HTTPS (Let's Encrypt via Tailscale)
+                 ▼
+  ┌──────────────────────────────────────────┐
+  │  Caddy (reverse proxy)                   │
+  │                                          │
+  │  /* ──────────► 127.0.0.1:3000 (app)     │
+  │  /commute-audio/* ► 127.0.0.1:9000 (s3)  │
+  └──────────────┬───────────────────────────┘
+                 │
+  ┌──────────────┼──────────────────────────────────────┐
+  │              │  Docker Compose Network               │
+  │              ▼                                       │
+  │  ┌───────────────────────┐                           │
+  │  │   Express.js Server   │                           │
+  │  │     (Node.js)         │                           │
+  │  │                       │                           │
+  │  │  Static files:        │                           │
+  │  │  /js, /css, /index    │                           │
+  │  │                       │                           │
+  │  │  JSON API routes:     │                           │
+  │  │  /v1/commutes         │                           │
+  │  │  /v1/uploads ─────────┼──── presigned PUT URL ────┤
+  │  │  /v1/recordings       │                           │
+  │  │  /v1/prompts          │                           │
+  │  │  /v1/prompts/coverage │                           │
+  │  └───────┬───────────────┘                           │
+  │          │                                           │
+  │          │ pg (node-postgres)        ┌──────────────┐│
+  │          │                           │    MinIO     ││
+  │          ▼                           │ (S3-compat)  ││
+  │  ┌───────────────────┐               │              ││
+  │  │   PostgreSQL 16   │               │ commute-     ││
+  │  │                   │               │ audio/       ││
+  │  │  commutes         │               │  commutes/   ││
+  │  │  prompts          │               │   {id}/      ││
+  │  │  recordings       │               │    {p}.wav   ││
+  │  └───────────────────┘               └──────────────┘│
+  └──────────────────────────────────────────────────────┘
 ```
 
 ### Request Walkthroughs
@@ -246,7 +266,7 @@ Client                      Express                     MinIO
 
 **Storage config:**
 - Internal endpoint: `http://minio:9000` (within Docker network)
-- Public endpoint: `MINIO_PUBLIC_ENDPOINT` (presigned URLs)
+- Public endpoint: `MINIO_PUBLIC_ENDPOINT` — set to the Tailscale HTTPS domain (e.g., `https://albert-server.tail2d72e9.ts.net`). Presigned URLs use this so the browser uploads via Caddy's `/commute-audio/*` route, which proxies to MinIO on port 9000.
 - Bucket: `commute-audio` (private, no anonymous access)
 - Presign expiration: 120 seconds
 
@@ -388,23 +408,26 @@ function scorePrompt(prompt, commuteId, counts) {
 ## 7. Migration Plan
 
 ```
-Phase 1: CLI/API BACKEND (current scope)
+Phase 1: BACKEND + FRONTEND + DEPLOYMENT ✅ (complete)
 ├── Express.js JSON API server
 ├── PostgreSQL schema: commutes, prompts, recordings
 ├── MinIO presigned upload flow
 ├── Prompt scheduling with scoring algorithm
 ├── All sensor/device metadata columns
 ├── Docker Compose deployment
-└── Effort: M
+├── Safari frontend: Capture, Review, Coverage pages
+│   ├── extendable-media-recorder + WAV encoder (true 16-bit PCM WAV @ 48kHz)
+│   ├── speechSynthesis TTS with iOS unlock + voice preload
+│   ├── DeviceMotionEvent.requestPermission() in user gesture
+│   ├── Geolocation watchPosition for continuous GPS
+│   ├── Linear while-loop prompt cycle with error-pause
+│   └── Waveform visualizer + recording ring UI
+├── Caddy reverse proxy with Tailscale HTTPS (Let's Encrypt via ts.net)
+│   ├── App traffic: /* → 127.0.0.1:3000
+│   └── MinIO uploads: /commute-audio/* → 127.0.0.1:9000
+└── Tailscale private networking (no port forwarding required)
 
-Phase 2: SAFARI PWA FRONTEND (future)
-├── Capture page: Vanilla JS (extendable-media-recorder + WAV + speechSynthesis)
-├── DeviceMotion/Orientation permission + capture
-├── Audio route detection + capture
-├── Review/coverage pages: server-rendered HTML + HTMX
-└── Effort: L
-
-Phase 3: SMART PROMPT SCHEDULING
+Phase 2: SMART PROMPT SCHEDULING (future)
 ├── Replace baseline sequence_index with scoring function
 ├── Same API contract — no client changes
 └── Effort: M
@@ -412,33 +435,49 @@ Phase 3: SMART PROMPT SCHEDULING
 
 ---
 
-## 8. Future Development
+## 8. Deployment
 
-### Safari PWA Frontend
+### Network Architecture
 
-A hands-free capture experience running on iPhone Safari as an installed PWA.
+The app is deployed on a private server accessible only via Tailscale (a WireGuard-based mesh VPN). No port forwarding or public DNS is required.
 
-**Capture page (Vanilla JS):**
-- `extendable-media-recorder` + WAV encoder for 10s clip recording
-- `speechSynthesis` for TTS prompt playback
-- `DeviceMotionEvent.requestPermission()` + `DeviceOrientationEvent.requestPermission()` on first tap
-- `navigator.geolocation.watchPosition()` for continuous GPS
-- `navigator.mediaDevices.getUserMedia()` with `echoCancellation: false` for raw audio
-- `MediaStreamTrack.getSettings()` capture per recording
-- `navigator.mediaDevices.enumerateDevices()` for audio route detection
-- Screen Wake Lock API to prevent screen dimming
-- `document.visibilitychange` listener to detect backgrounding
-- Auto-advance prompt loop with 2-second cooldown
+**Why Tailscale + Caddy:**
+- HTTPS is required for browser APIs: `getUserMedia()` (microphone), `geolocation`, `DeviceMotionEvent.requestPermission()`, and `speechSynthesis` all require a secure context
+- Tailscale provides private access from iPhone/MacBook without exposing the server to the internet
+- Caddy automatically obtains Let's Encrypt TLS certs for `*.ts.net` domains via Tailscale's built-in cert provisioning
+- Caddy routes both app traffic and MinIO presigned uploads through a single HTTPS domain
 
-**Review/Coverage pages (HTMX):**
-- `GET /v1/recordings` → HTML table with filters, audio playback
-- `GET /v1/recordings/{id}` → detail view with all metadata
-- `GET /v1/prompts/coverage` → coverage dashboard
+**Caddy configuration:**
+```
+albert-server.tail2d72e9.ts.net {
+    handle /commute-audio/* {
+        reverse_proxy 127.0.0.1:9000
+    }
+    handle {
+        reverse_proxy 127.0.0.1:3000
+    }
+}
+```
 
-**Safety guardrails:**
-- Voice-only flow after start tap; no text input while driving
-- Auto-advance between prompts
-- "Goodbye. Commute complete." speech on session end
+**Tailscale setup:**
+- `TS_PERMIT_CERT_UID=caddy` in `/etc/default/tailscaled` grants Caddy permission to fetch TLS certs
+- HTTPS must be enabled in the Tailscale admin console (DNS page)
+- MagicDNS must be enabled
+
+### iOS Safari Permissions
+
+Three permissions are requested on first tap of "Start Commute", in this specific order for iOS compatibility:
+
+1. **Speech synthesis unlock** — silent utterance + `waitForSpeechVoices()` (must be in direct user gesture)
+2. **Motion & Orientation** — `DeviceMotionEvent.requestPermission()` (must be in direct user gesture, before any `await`)
+3. **Microphone** — `getUserMedia()` (triggers Safari permission dialog)
+4. **Location** — `getCurrentPosition()` (triggers Safari permission dialog)
+
+The order matters: iOS Safari invalidates the "user gesture" context after async operations, so motion permission must be requested before the mic/GPS `await`s.
+
+---
+
+## 9. Future Development
 
 ### Async Enrichment Pipeline
 
@@ -487,8 +526,9 @@ commute-capture-asr-v1/
 ### Other Future Enhancements
 
 - **Configurable recording duration** with VAD-based endpointing (instead of fixed 10s)
-- **Disable browser DSP** (`echoCancellation: false`) for higher raw data value
 - **Ambient baseline clips** at session start for noise profiling
+- **Screen Wake Lock API** to prevent screen dimming during commute
+- **Offline queue** with IndexedDB for upload retry when connectivity drops
 - **Multi-user expansion** with auth and consent framework
 - **Marketplace integration** (Datarade, Defined.ai) for automated dataset listing
 - **Real-time transcription** feedback during commute
